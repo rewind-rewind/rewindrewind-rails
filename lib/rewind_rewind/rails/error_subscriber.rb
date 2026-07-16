@@ -22,7 +22,7 @@ module RewindRewind
           level: normalize_severity(severity),
           tags: { handled: handled, source: source }.compact,
           extra: { context: json_safe(context) }.compact,
-          user: user_from(context)
+          identity: identity_from(context)
         )
         RewindRewind.mark_reported!(error)
       rescue StandardError => e
@@ -39,10 +39,11 @@ module RewindRewind
         end
       end
 
-      def user_from(context)
+      def identity_from(context)
         return nil unless context.respond_to?(:[])
 
-        id = context[:user_id] || context["user_id"]
+        id = context[:identity_id] || context["identity_id"] ||
+             context[:user_id] || context["user_id"]
         id.nil? ? nil : { id: id.to_s }
       end
 
