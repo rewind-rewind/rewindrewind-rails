@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The suite boots a real minimal Rails app, so the middleware stack and the
+# Rails.error reporting path under test are the genuine article.
+bundle exec rake test
+
+# The gem must still package cleanly.
 artifact="$(mktemp --suffix=.gem)"
 trap 'rm -f "$artifact"' EXIT
 

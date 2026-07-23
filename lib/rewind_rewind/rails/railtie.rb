@@ -11,10 +11,22 @@ module RewindRewind
     # Responsibilities:
     #   1. Default the project_root to Rails.root and environment to Rails.env
     #      when the host hasn't configured RewindRewind explicitly.
-    #   2. Insert the pure {RewindRewind::Rack} middleware so unhandled request
-    #      exceptions are reported.
-    #   3. Subscribe to the Rails error reporter so handled errors flow through
-    #      too.
+    #   2. Subscribe to the Rails error reporter, which is the single reporting
+    #      path on Rails — for both handled and unhandled errors.
+    #
+    # Deliberately absent: {RewindRewind::Rack}. That middleware exists for bare
+    # Rack hosts (Sinatra, Hanami, Roda, ...) which have no error reporter of
+    # their own. On Rails it is both redundant and harmful:
+    #
+    #   * Redundant, because ActionDispatch::Executor already routes every
+    #     unhandled request exception to Rails.error, which we subscribe to.
+    #   * Harmful, because `config.middleware.use` *appends*, placing the
+    #     middleware innermost — inside ActionDispatch::ShowExceptions. It would
+    #     therefore rescue and report exceptions before Rails has classified
+    #     them, defeating ActionDispatch::ExceptionWrapper.rescue_responses.
+    #     Ordinary HTTP outcomes that Rails deliberately does not report
+    #     (ActionController::BadRequest from a malformed multipart body,
+    #     RoutingError, RecordNotFound, ...) would be reported as errors.
     #
     # Hosts can still call {RewindRewind.configure} in an initializer to set the
     # api_key, tags, release, etc. — the Railtie only fills in framework-derived
@@ -22,7 +34,7 @@ module RewindRewind
     class Railtie < ::Rails::Railtie
       config.rewind_rewind = ActiveSupport::OrderedOptions.new
 
-      initializer "rewind_rewind.configure" do |app|
+      initializer "rewind_rewind.configure" do
         # Establish Rails-aware defaults without clobbering an explicit
         # configure block the host may already have run.
         unless RewindRewind.configured?
@@ -32,8 +44,6 @@ module RewindRewind
             c.logger ||= ::Rails.logger
           end
         end
-
-        app.config.middleware.use RewindRewind::Rack
       end
 
       initializer "rewind_rewind.subscribe" do

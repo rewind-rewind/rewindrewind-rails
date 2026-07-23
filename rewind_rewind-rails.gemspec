@@ -6,9 +6,10 @@ Gem::Specification.new do |spec|
   spec.name        = "rewind_rewind-rails"
   spec.version     = RewindRewind::Rails::VERSION
   spec.summary     = "Rails integration for the RewindRewind Ruby SDK"
-  spec.description = "Auto-wires RewindRewind into Rails: inserts the Rack " \
-                     "middleware for unhandled request exceptions and subscribes " \
-                     "to Rails.error for handled errors. Depends on rewind_rewind."
+  spec.description = "Auto-wires RewindRewind into Rails by subscribing to the " \
+                     "Rails error reporter, so handled and unhandled errors are " \
+                     "reported through Rails' own classification of what counts " \
+                     "as an error. Depends on rewind_rewind."
   spec.authors  = ["RewindRewind"]
   spec.email    = ["sdk@rewindrewind.com"]
   spec.homepage = "https://rewindrewind.com"
