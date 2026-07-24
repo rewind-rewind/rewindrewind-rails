@@ -90,6 +90,16 @@ module RewindTestHelpers
     captured
   end
 
+  # Same, but keeps the keyword options (request context, tags, ...) so tests
+  # can assert on what accompanies the exception, not just which one it was.
+  def capturing_calls
+    calls = []
+    RewindRewind.stub(:capture_exception, ->(error, **opts) { calls << { error: error, **opts } }) do
+      yield
+    end
+    calls
+  end
+
   def middleware_classes
     Rails.application.middleware.map(&:klass)
   end

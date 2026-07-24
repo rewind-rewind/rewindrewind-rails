@@ -2,27 +2,28 @@
 
 require "test_helper"
 
-# Rails already decides which exceptions are bugs and which are ordinary HTTP
-# statuses: `ActionDispatch::ExceptionWrapper.rescue_responses` maps the latter
-# to status symbols, `ShowExceptions` records the verdict on the request as
-# `action_dispatch.report_exception`, and `ActionDispatch::Executor` reports to
-# `Rails.error` only when that verdict says so.
+# The integration is deliberately LOUD: RewindRewind::Rack wraps the app and
+# reports every exception raised during request handling, then re-raises so the
+# host's own error handling is untouched. Suppression is the host's decision,
+# expressed as a denylist via `config.excluded_exceptions` — not something the
+# SDK infers from Rails' `rescue_responses` table.
 #
-# Inserting a rescue-everything Rack middleware *inside* that pair (which
-# `config.middleware.use` does — it appends, so the middleware ends up
-# innermost) sees every exception before Rails has classified it, and therefore
-# reports things Rails deliberately would not. On Rails the middleware is also
-# redundant: the Railtie already subscribes an ErrorSubscriber to Rails.error.
+# That table answers "what HTTP status should this become?", which is a
+# different question from "is this worth a developer's attention?". An
+# ActiveRecord::RecordInvalid from a failed `save!` is a 422 *and* usually a
+# bug; ActionController::BadRequest from a malformed multipart body is a 400
+# and usually a scanner. Only the host can tell those apart, so the host
+# decides.
 #
-# These tests pin that contract down.
+# Being innermost also means the report carries request context (method, path,
+# url, ip, user agent) that the Rails.error path alone does not provide.
 class RailtieMiddlewareTest < Minitest::Test
   include RewindTestHelpers
 
-  def test_rack_middleware_is_not_inserted_on_rails
-    refute_includes middleware_classes, RewindRewind::Rack,
-                    "RewindRewind::Rack must not be in a Rails middleware stack: " \
-                    "Rails.error is the reporting path, and the middleware would " \
-                    "bypass ShowExceptions' rescue_response? classification."
+  def test_rack_middleware_is_inserted_on_rails
+    assert_includes middleware_classes, RewindRewind::Rack,
+                    "The Rack middleware is what makes request-exception " \
+                    "reporting loud and request-context-aware."
   end
 
   def test_rails_exception_handling_pair_is_intact
@@ -30,36 +31,55 @@ class RailtieMiddlewareTest < Minitest::Test
     assert_includes middleware_classes, ActionDispatch::Executor
   end
 
-  # The regression this whole change exists for: an empty multipart POST is a
-  # Rails-rescuable 400, not a bug.
-  def test_empty_multipart_post_renders_400_without_capture
-    captured = capturing_exceptions do
+  # Rails classifies ActionController::BadRequest as a rescuable 400 and does
+  # not report it. We do report it, because "renders as a 4xx" is not the same
+  # as "not worth knowing about". Hosts that disagree exclude it by name.
+  def test_rescuable_request_exception_is_reported_by_default
+    calls = capturing_calls do
       response = Rack::MockRequest.new(Rails.application).post(
         "/",
         "CONTENT_TYPE" => "multipart/form-data; boundary=----rewind-test",
         input: EmptyRackInput.new
       )
 
-      assert_equal 400, response.status
+      assert_equal 400, response.status, "Rails' own status handling must be untouched"
     end
 
-    assert_empty captured,
-                 "Rails classifies ActionController::BadRequest as :bad_request, " \
-                 "so it must never be reported as an error."
+    assert_equal 1, calls.size
+    assert_equal "ActionController::BadRequest", calls.first[:error].class.name
   end
 
-  # Guards the risk side of removing the middleware: genuinely unhandled
-  # request exceptions must still be reported, end to end through the real
-  # stack rather than via a direct Rails.error.report call.
-  def test_unhandled_request_exception_is_still_captured
+  # The reason the middleware earns its place: Rails.error alone hands the
+  # subscriber a context of {controller: ...} with no request details.
+  def test_reported_request_exception_carries_request_context
+    calls = capturing_calls do
+      Rack::MockRequest.new(Rails.application).get(
+        "/boom",
+        "HTTP_USER_AGENT" => "curl/8.0",
+        "REMOTE_ADDR" => "203.0.113.9"
+      )
+    end
+
+    request = calls.first[:request]
+
+    refute_nil request, "request context must accompany request exceptions"
+    assert_equal "GET", request[:method]
+    assert_equal "/boom", request[:path]
+    assert_equal "curl/8.0", request[:user_agent]
+    assert_equal "203.0.113.9", request[:remote_ip]
+  end
+
+  # Both the middleware and the Rails.error subscriber can see the same
+  # unhandled exception. The already_reported? marker must keep that to one
+  # issue rather than two.
+  def test_unhandled_request_exception_is_reported_exactly_once
     captured = capturing_exceptions do
       response = Rack::MockRequest.new(Rails.application).get("/boom")
 
       assert_equal 500, response.status
     end
 
-    assert_equal 1, captured.size,
-                 "Removing the Rack middleware must not lose coverage of real errors."
+    assert_equal 1, captured.size, "the Rack and Rails.error paths must not double-report"
     assert_instance_of RuntimeError, captured.first
     assert_equal "genuinely unhandled", captured.first.message
   end

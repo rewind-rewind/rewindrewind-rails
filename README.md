@@ -12,8 +12,8 @@ Use the core gem directly for Sinatra, Roda, or another Rack application.
 - Ruby 3.0 or newer
 - Rails 6.1 or newer
 
-Reporting requires a Rails version that provides `Rails.error.subscribe`, which
-is the integration point for both handled and unhandled errors.
+The Rack middleware works across supported Rails versions. Handled-error
+reporting also requires a Rails version that provides `Rails.error.subscribe`.
 
 ## Installation
 
@@ -65,58 +65,66 @@ for capture methods and all core configuration options.
 
 ## Automatic reporting
 
-The Railtie subscribes to `Rails.error`, which is Rails' single reporting path.
-That one subscriber covers everything: unhandled request exceptions (routed
-there by `ActionDispatch::Executor`), plus handled errors from controllers,
-jobs, `Rails.error.report`, and `Rails.error.handle`. It preserves handled,
-severity, source, context, and identity metadata. Legacy `user_id` context is
-accepted as a fallback.
+The Railtie adds two integrations:
 
-### Why no Rack middleware on Rails
+- `RewindRewind::Rack` reports exceptions raised during request handling, adds
+  safe request context (method, path, url, ip, user agent), and re-raises each
+  exception so your own error handling is untouched.
+- A `Rails.error` subscriber reports handled errors from controllers, jobs,
+  `Rails.error.report`, and `Rails.error.handle`. It preserves handled,
+  severity, source, context, and identity metadata. Legacy `user_id` context is
+  accepted as a fallback.
 
-`RewindRewind::Rack` is for bare Rack hosts — Sinatra, Roda, Hanami — that have
-no error reporter of their own. As of 1.3.0 the Railtie no longer inserts it,
-because on Rails it was both redundant and harmful.
+### Loud by default
 
-Rails already distinguishes bugs from ordinary HTTP outcomes:
-`ActionDispatch::ExceptionWrapper.rescue_responses` maps the latter to status
-symbols, `ActionDispatch::ShowExceptions` records the verdict on the request as
-`action_dispatch.report_exception`, and `ActionDispatch::Executor` reports to
-`Rails.error` only when that verdict says to.
+The middleware is innermost (`config.middleware.use` appends), so it sees
+exceptions before `ActionDispatch::ShowExceptions` classifies them against
+`ActionDispatch::ExceptionWrapper.rescue_responses`. That is deliberate.
 
-`config.middleware.use` *appends*, so the middleware landed innermost — inside
-`ShowExceptions`. It therefore saw and reported every exception before Rails had
-classified any of them, which meant routine 4xx traffic arrived as errors:
-`ActionController::BadRequest` from a malformed multipart body (a common
-scanner probe), `RoutingError`, `RecordNotFound`, and the rest of the
-`rescue_responses` table.
+`rescue_responses` answers *"what HTTP status should this become?"* — a
+different question from *"is this worth a developer's attention?"* The two come
+apart constantly:
 
-Deferring to Rails also means anything a host app registers itself is honoured
-automatically, with no denylist to maintain:
+| Exception | Status | Worth reporting? |
+| --- | --- | --- |
+| `ActiveRecord::RecordInvalid` from a failed `save!` | 422 | Usually yes — a bug |
+| `ActiveRecord::RecordNotFound` in internal lookup code | 404 | Usually yes |
+| `ActionController::BadRequest` from empty multipart | 400 | Usually no — a scanner |
+| `ActionController::RoutingError` | 404 | Usually no |
 
-```ruby
-config.action_dispatch.rescue_responses["MyApp::NotAuthorized"] = :forbidden
-```
+Only the host application can tell those apart, so the SDK reports everything
+and lets you decide what to drop. Rails' own reporting path, by contrast, skips
+every entry in `rescue_responses` — which is why deferring to it silently loses
+the first two rows.
 
-One caveat, in development only: `ActionDispatch::Reloader` subclasses
-`Executor` and is inserted inside `ShowExceptions` when reloading is enabled.
-Its inherited `rescue Exception` reports unconditionally, so rescuable 4xx are
-still reported in development. Production, where reloading is off, is
-unaffected.
+### Excluding what you don't want
 
-### Deduplication and exclusions
-
-The integrations mark each exception object after reporting it so the same
-error is not sent twice. The core SDK captures all exception classes by default.
-Configure `excluded_exceptions` when specific framework exceptions are known to
-be non-actionable for your application.
-
-For a starting point, opt into the core SDK's suggested framework list:
+Suppression is a denylist on the core configuration. Matching is by
+fully-qualified class name and walks both the ancestry and the `cause` chain, so
+listing a wrapped framework error catches the wrapper too:
 
 ```ruby
-config.excluded_exceptions =
-  RewindRewind::Configuration::SUGGESTED_EXCLUDED_EXCEPTIONS
+RewindRewind.configure do |c|
+  c.excluded_exceptions =
+    RewindRewind::Configuration::SUGGESTED_EXCLUDED_EXCEPTIONS
+end
 ```
+
+`SUGGESTED_EXCLUDED_EXCEPTIONS` is a starting point covering the common
+framework 4xx. It includes `ActiveRecord::RecordNotFound`; drop that entry if
+you want failed lookups reported:
+
+```ruby
+c.excluded_exceptions =
+  RewindRewind::Configuration::SUGGESTED_EXCLUDED_EXCEPTIONS -
+  %w[ActiveRecord::RecordNotFound]
+```
+
+### Deduplication
+
+Both integrations mark each exception object after reporting it, so the same
+error is never sent twice. The middleware runs first and wins, which is what
+attaches request context to unhandled request exceptions.
 
 ## Development
 

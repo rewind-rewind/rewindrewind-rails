@@ -12,9 +12,10 @@ module RewindRewind
     # when Rails is defined, so referencing Rails here is safe.
     class ErrorSubscriber
       def report(error, handled:, severity:, context: {}, source: nil)
-        # Rails can surface the same exception object more than once (and a
-        # host may still mount RewindRewind::Rack by hand). Whichever path runs
-        # first captures it; the rest no-op, to avoid duplicate issues.
+        # The Rack middleware and this subscriber both see unhandled request
+        # exceptions. The middleware, being innermost, gets there first and
+        # captures with request context; this then no-ops rather than filing a
+        # second, thinner issue for the same error.
         return if RewindRewind.already_reported?(error)
 
         RewindRewind.capture_exception(
