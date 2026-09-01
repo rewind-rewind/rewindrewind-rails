@@ -3,6 +3,7 @@
 require "rewind_rewind"
 require_relative "version"
 require_relative "error_subscriber"
+require_relative "browser_helper"
 
 module RewindRewind
   module Rails
@@ -15,6 +16,9 @@ module RewindRewind
     #      handling is reported, with request context, and then re-raised.
     #   3. Subscribe to the Rails error reporter so handled errors — and errors
     #      from jobs and other non-request code — flow through too.
+    #   4. Mix {BrowserHelper} into ActionView, so the browser SDK install is
+    #      a view helper the gem owns rather than a snippet the host pastes
+    #      and then never updates. See {Browser} for why that matters.
     #
     # On reporting policy: the middleware is innermost (`config.middleware.use`
     # appends), so it sees exceptions before ActionDispatch::ShowExceptions
@@ -53,6 +57,17 @@ module RewindRewind
         end
 
         app.config.middleware.use RewindRewind::Rack
+      end
+
+      # The browser SDK authenticates with the project's *public* key, which is
+      # a different credential from the server-side api_key and belongs to a
+      # different trust boundary — it ships to every visitor. Keep it in the
+      # Rails-side namespace rather than on the core configuration.
+      initializer "rewind_rewind.browser" do |app|
+        options = app.config.rewind_rewind
+        options.public_key ||= ENV["REWINDREWIND_PUBLIC_KEY"]
+
+        ActiveSupport.on_load(:action_view) { include RewindRewind::Rails::BrowserHelper }
       end
 
       initializer "rewind_rewind.subscribe" do
