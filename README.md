@@ -65,7 +65,7 @@ for capture methods and all core configuration options.
 
 ## Automatic reporting
 
-The Railtie adds two integrations:
+The Railtie adds two integrations, plus the browser helper described below:
 
 - `RewindRewind::Rack` reports exceptions raised during request handling, adds
   safe request context (method, path, url, ip, user agent), and re-raises each
@@ -125,6 +125,74 @@ c.excluded_exceptions =
 Both integrations mark each exception object after reporting it, so the same
 error is never sent twice. The middleware runs first and wins, which is what
 attaches request context to unhandled request exceptions.
+
+## Browser errors
+
+Server-side reporting covers the request. To also report what fails in the
+visitor's browser, add one line to your layout, as early in `<head>` as your
+content security policy allows:
+
+```erb
+<%= rewind_rewind_browser_tag %>
+```
+
+Set the project's public key alongside the server key. It is a different
+credential: it ships to every visitor, so it lives in the Rails-side namespace
+rather than on the core configuration.
+
+```sh
+REWINDREWIND_PUBLIC_KEY=rrpub_xxx
+```
+
+```ruby
+# config/initializers/rewind_rewind.rb — optional; the env var is enough
+Rails.application.config.rewind_rewind.public_key = ENV["REWINDREWIND_PUBLIC_KEY"]
+Rails.application.config.rewind_rewind.enabled    = Rails.env.production?
+Rails.application.config.rewind_rewind.init_options = { sample_rate: 0.5 }
+```
+
+The helper renders nothing when there is no public key or when `enabled` is
+`false`, so it is safe to leave in the layout for every environment. It picks up
+the environment and release from your `RewindRewind.configure` block, so the
+browser and the server always report against the same deploy.
+
+### Why a helper and not a snippet
+
+The hosted SDK installs in two parts: a small ES5 pre-load stub, then `init()`.
+The stub is not decoration. The bundle is fetched `async`, so the stub holds the
+temporary `error`, `unhandledrejection` and `window.onerror` hooks that cover
+the window between page parse and the bundle landing — which is exactly where
+import-map failures, boot-time syntax errors on older engines, and framework
+boot errors happen.
+
+A hand-copied stub goes stale silently. It keeps reporting steady-state errors,
+so nothing looks broken, while every error in that early window is dropped.
+Rendering the snippet from the gem means the stub travels with the gem version
+and `bundle update` is the whole upgrade path.
+
+### Passing init options
+
+Any extra keyword reaches the browser SDK's `init()`. Snake_case is camelized,
+and Ruby regexps become JavaScript literals:
+
+```erb
+<%= rewind_rewind_browser_tag(
+      sample_rate: 0.5,
+      ignore_errors: [/Object Not Found Matching Id:\d+/, "Script error."]
+    ) %>
+```
+
+Regexp syntax that JavaScript cannot run — `\A`, `\z`, `\h`, lookbehind,
+`//x` — raises `ArgumentError` rather than shipping a filter that silently never
+matches. For anything Ruby cannot express, emit JavaScript verbatim:
+
+```erb
+<%= rewind_rewind_browser_tag(
+      before_send: RewindRewind::Rails::Browser.raw(
+        "function (payload) { return payload.message.length > 500 ? null : payload; }"
+      )
+    ) %>
+```
 
 ## Development
 

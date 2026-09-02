@@ -8,9 +8,11 @@ Gem::Specification.new do |spec|
   spec.summary     = "Rails integration for the RewindRewind Ruby SDK"
   spec.description = "Auto-wires RewindRewind into Rails: inserts the Rack " \
                      "middleware so request exceptions are reported with request " \
-                     "context, and subscribes to Rails.error for handled errors " \
-                     "and non-request code. Loud by default; suppression is the " \
-                     "host's via excluded_exceptions. Depends on rewind_rewind."
+                     "context, subscribes to Rails.error for handled errors " \
+                     "and non-request code, and ships the browser SDK install as " \
+                     "a view helper so it cannot drift from the server one. Loud " \
+                     "by default; suppression is the host's via " \
+                     "excluded_exceptions. Depends on rewind_rewind."
   spec.authors  = ["RewindRewind"]
   spec.email    = ["sdk@rewindrewind.com"]
   spec.homepage = "https://rewindrewind.com"
