@@ -29,7 +29,7 @@ Gem::Specification.new do |spec|
 
   # Depends on the framework-agnostic core. Railties (>= 6.1) is provided by the
   # host Rails app; the Railtie only references ::Rails::Railtie at load time.
-  spec.add_dependency "rewind_rewind", "~> 1.1"
+  spec.add_dependency "rewind_rewind", "~> 1.3"
 
   spec.add_development_dependency "minitest", "~> 5.0"
   spec.add_development_dependency "rake", "~> 13.0"

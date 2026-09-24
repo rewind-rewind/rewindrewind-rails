@@ -75,6 +75,11 @@ The Railtie adds two integrations, plus the browser helper described below:
   severity, source, context, and identity metadata. Legacy `user_id` context is
   accepted as a fallback.
 
+Both send through the core SDK's background worker, so a failed request is not
+held open while its exception is reported. See
+[Delivery](https://github.com/rewind-rewind/rewindrewind-ruby#delivery) for the
+worker settings and for `sync: true`.
+
 ### Loud by default
 
 The middleware is innermost (`config.middleware.use` appends), so it sees
